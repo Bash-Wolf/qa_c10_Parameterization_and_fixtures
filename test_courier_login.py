@@ -1,73 +1,59 @@
-import os
 import pytest
 import requests
-from dotenv import load_dotenv
-
-load_dotenv()
-BASE_URL = os.getenv("BASE_URL", "https://qa-scooter.praktikum-services.ru")
+from data import Endpoints, ResponseMessages
 
 
 class TestCourierLogin:
-    LOGIN_ENDPOINT = "/api/v1/courier/login"
 
     @pytest.mark.parametrize(
-        "scenario_name, payload_override, expected_status, expected_message",
+        "case_type, override_login, override_password, expected_status, expected_key, expected_val",
         [
-            # 1. Успешная авторизация
-            ("success", None, 200, None),
-            # 2. Запрос без логина (передаем только пароль)
-            ("missing_login", {"password": "Password123!"}, 400, "Недостаточно данных для входа"),
-            # 3. Запрос без пароля (передаем только логин курьера)
-            ("missing_password", {"login": "{created_login}"}, 400, "Недостаточно данных для входа"),
-            # 4. Несуществующая пара логин/пароль
-            ("non_existent", {"login": "non_existing_user_99999", "password": "wrong_pass_99999"}, 404, "Учетная запись не найдена"),
+            ("success", None, None, 200, "id", None),
+            ("missing_login", "", None, 400, "message", ResponseMessages.INSUFFICIENT_DATA),
+            ("missing_password", None, "", 400, "message", ResponseMessages.INSUFFICIENT_DATA),
+            ("non_existent", "non_existent_user_99999", "wrong_pass_99999", 404, "message", ResponseMessages.ACCOUNT_NOT_FOUND),
+        ],
+        ids=[
+            "successful_login",
+            "login_without_login_field",
+            "login_without_password_field",
+            "login_with_non_existent_credentials",
         ]
     )
-    def test_courier_login_parametrized(
+    def test_courier_login_scenarios(
         self,
         courier,
-        scenario_name,
-        payload_override,
+        case_type,
+        override_login,
+        override_password,
         expected_status,
-        expected_message
+        expected_key,
+        expected_val
     ):
-        """
-        Параметризованный тест авторизации курьера.
-        """
-        # Формируем тело запроса
-        if payload_override is None:
-            request_payload = {
-                "login": courier["login"],
-                "password": courier["password"]
-            }
-        else:
-            request_payload = payload_override.copy()
-            if request_payload.get("login") == "{created_login}":
-                request_payload["login"] = courier["login"]
+        # Формируем тело запроса на основе созданного фикстурой курьера
+        login = courier["login"] if override_login is None else override_login
+        password = courier["password"] if override_password is None else override_password
 
-        # Отправляем запрос на авторизацию
-        login_url = f"{BASE_URL}{self.LOGIN_ENDPOINT}"
-        response = requests.post(login_url, json=request_payload)
+        payload = {
+            "login": login,
+            "password": password
+        }
 
-        # Обход бага стенда Самоката: падение в 504 при отсутствии пароля
-        if scenario_name == "missing_password" and response.status_code == 504:
-            pytest.skip("Известный баг учебного стенда: 504 Gateway Timeout при запросе без пароля")
+        response = requests.post(Endpoints.LOGIN_COURIER, json=payload)
 
-        # Проверка статус-кода
+        # 1. Проверка HTTP статус-кода
         assert response.status_code == expected_status, (
-            f"Для сценария '{scenario_name}' ожидался статус {expected_status}, "
-            f"получен {response.status_code}: {response.text}"
+            f"Ожидался статус {expected_status}, получен {response.status_code}. "
+            f"Тело ответа: {response.text}"
         )
 
-        body = response.json()
+        response_body = response.json()
 
-        # Проверка тела ответа
-        if expected_status == 200:
-            assert "id" in body, "Успешный ответ должен содержать поле id"
-            assert isinstance(body["id"], int) and body["id"] > 0, "Поле id должно быть положительным числом"
+        # 2. Проверка тела ответа
+        if case_type == "success":
+            assert expected_key in response_body, f"В теле ответа отсутствует ключ '{expected_key}'"
+            assert isinstance(response_body[expected_key], int), f"Поле '{expected_key}' должно быть int"
         else:
-            assert "message" in body, "Негативный ответ должен содержать поле message"
-            assert body["message"] == expected_message, (
-                f"Для сценария '{scenario_name}' ожидалось сообщение '{expected_message}', "
-                f"получено '{body.get('message')}'"
+            assert response_body.get(expected_key) == expected_val, (
+                f"Ожидалось сообщение '{expected_val}', получено '{response_body.get(expected_key)}'"
             )

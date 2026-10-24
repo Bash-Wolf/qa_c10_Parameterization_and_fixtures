@@ -1,51 +1,45 @@
-import os
 import uuid
-
 import pytest
 import requests
-from dotenv import load_dotenv
-
-load_dotenv()
-
-BASE_URL = os.getenv("BASE_URL")
+from data import Endpoints
 
 
 @pytest.fixture
 def courier():
-    # 1. Генерируем уникальный логин курьера с помощью uuid
-    login = f"courier_{uuid.uuid4().hex[:8]}"
+    """
+    Генерирует уникального курьера, регистрирует через API,
+    передает credentials в тест, а после выполнения теста удаляет курьера.
+    """
+    # 1. Генерация уникальных данных
+    unique_id = uuid.uuid4().hex[:8]
+    login = f"courier_{unique_id}"
+    password = f"pass_{unique_id}"
+    first_name = f"name_{unique_id}"
 
-    courier_data = {
+    payload = {
         "login": login,
-        "password": "Password123!",
-        "firstName": "TestCourier",
+        "password": password,
+        "firstName": first_name
     }
 
-    # 2. Создаем курьера через POST /api/v1/courier
-    response = requests.post(
-        f"{BASE_URL}/api/v1/courier",
-        json=courier_data,
-    )
+    # 2. Создание курьера
+    response = requests.post(Endpoints.CREATE_COURIER, json=payload)
     assert response.status_code == 201, f"Не удалось создать курьера: {response.text}"
 
-    # 3. Авторизуемся для получения courier_id
-    login_response = requests.post(
-        f"{BASE_URL}/api/v1/courier/login",
-        json={
-            "login": courier_data["login"],
-            "password": courier_data["password"],
-        },
-    )
-    assert login_response.status_code == 200, f"Не удалось авторизоваться для получения id: {login_response.text}"
-    courier_id = login_response.json().get("id")
-
-    # 4. Передаем в тест данные курьера и полученный id
-    yield {
-        "login": courier_data["login"],
-        "password": courier_data["password"],
-        "id": courier_id,
+    # 3. Передача данных в тест
+    courier_data = {
+        "login": login,
+        "password": password,
+        "firstName": first_name
     }
+    yield courier_data
 
-    # 5. Teardown: после завершения теста удаляем созданного курьера
-    if courier_id:
-        requests.delete(f"{BASE_URL}/api/v1/courier/{courier_id}")
+    # 4. Teardown: логинимся, чтобы получить id, и удаляем курьера
+    login_response = requests.post(
+        Endpoints.LOGIN_COURIER,
+        json={"login": login, "password": password}
+    )
+    if login_response.status_code == 200:
+        courier_id = login_response.json().get("id")
+        if courier_id:
+            requests.delete(f"{Endpoints.DELETE_COURIER}/{courier_id}")
